@@ -7,19 +7,19 @@
 <style>
   body {
     font-family: system-ui, sans-serif;
-    max-width: 500px;
     margin: auto;
-    padding: 20px;
+    padding: 10px;
+    max-width: 600px;
     background: #f5f5f5;
   }
   h2 {
     text-align: center;
-    font-size: 1.5rem;
-    margin-bottom: 20px;
+    font-size: 1.4rem;
+    margin-bottom: 10px;
   }
   input, select, button {
     font-size: 1rem;
-    padding: 10px;
+    padding: 8px;
     margin: 5px 0;
     width: 100%;
     box-sizing: border-box;
@@ -28,24 +28,28 @@
     background: #4CAF50;
     color: white;
     border: none;
-    border-radius: 6px;
+    border-radius: 5px;
   }
-  button:active {
-    background: #45a049;
-  }
-  label {
-    display: block;
-    margin-top: 10px;
-    font-weight: bold;
-  }
+  button:active { background: #45a049; }
   .controls {
     display: flex;
-    gap: 10px;
+    gap: 5px;
     flex-wrap: wrap;
   }
   .controls button {
     flex: 1 1 48%;
-    min-width: 100px;
+  }
+  #textDisplay {
+    background: white;
+    border-radius: 5px;
+    padding: 10px;
+    height: 300px;
+    overflow-y: auto;
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  .highlight {
+    background: yellow;
   }
 </style>
 </head>
@@ -55,7 +59,6 @@
 
 <input type="file" id="fileInput" accept=".pdf,.txt">
 
-<label for="voiceSelect">Voice:</label>
 <select id="voiceSelect"></select>
 
 <label for="rate">Speed:</label>
@@ -68,22 +71,30 @@
   <button id="stopBtn">⏹ Stop</button>
 </div>
 
+<div id="textDisplay"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
 <script>
 let speech = window.speechSynthesis;
 let voices = [];
-let textChunks = [];
-let currentChunk = 0;
+let textWords = [];
+let currentIndex = 0;
 let utterance;
 
+// Only keep enhanced American Male, American Female, British Male voices
 function loadVoices() {
-    voices = speech.getVoices();
+    let allVoices = speech.getVoices();
+    voices = allVoices.filter(v =>
+        (v.lang.startsWith("en-US") && (v.name.includes("Alex") || v.name.includes("Samantha"))) ||
+        (v.lang.startsWith("en-GB") && v.name.includes("Daniel"))
+    );
+
     let voiceSelect = document.getElementById('voiceSelect');
     voiceSelect.innerHTML = '';
     voices.forEach((voice, i) => {
         let opt = document.createElement('option');
         opt.value = i;
-        opt.textContent = voice.name + (voice.default ? ' (default)' : '');
+        opt.textContent = `${voice.name} (${voice.lang})`;
         voiceSelect.appendChild(opt);
     });
 }
@@ -95,42 +106,68 @@ document.getElementById('fileInput').addEventListener('change', async function()
     let file = this.files[0];
     if (!file) return;
     document.getElementById('bookTitle').textContent = file.name.replace(/\.[^/.]+$/, "");
-    
+
+    let text = '';
     if (file.name.toLowerCase().endsWith('.pdf')) {
         let pdfData = await file.arrayBuffer();
         let pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
-        let fullText = '';
         for (let i = 1; i <= pdf.numPages; i++) {
             let page = await pdf.getPage(i);
             let content = await page.getTextContent();
-            fullText += content.items.map(it => it.str).join(' ') + '\n';
+            text += content.items.map(it => it.str).join(' ') + '\n';
         }
-        prepareText(fullText);
     } else {
-        let text = await file.text();
-        prepareText(text);
+        text = await file.text();
     }
+
+    displayText(text);
 });
 
-function prepareText(text) {
-    // Split into ~150-word chunks for smoother speech
-    textChunks = text.match(/(.{1,900})(\s|$)/g);
-    currentChunk = 0;
+function displayText(text) {
+    let container = document.getElementById('textDisplay');
+    container.innerHTML = '';
+    textWords = text.split(/\s+/);
+    textWords.forEach((word, i) => {
+        let span = document.createElement('span');
+        span.textContent = word + ' ';
+        span.addEventListener('click', () => {
+            currentIndex = i;
+            speech.cancel();
+            speakFrom(currentIndex);
+        });
+        container.appendChild(span);
+    });
 }
 
-function speakChunk() {
-    if (currentChunk >= textChunks.length) return;
-    utterance = new SpeechSynthesisUtterance(textChunks[currentChunk]);
+function highlightWord(index) {
+    let container = document.getElementById('textDisplay');
+    let spans = container.querySelectorAll('span');
+    spans.forEach(s => s.classList.remove('highlight'));
+    if (spans[index]) {
+        spans[index].classList.add('highlight');
+        spans[index].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+}
+
+function speakFrom(index) {
+    if (index >= textWords.length) return;
+    highlightWord(index);
+    utterance = new SpeechSynthesisUtterance(textWords[index]);
     utterance.voice = voices[document.getElementById('voiceSelect').value];
     utterance.rate = parseFloat(document.getElementById('rate').value);
-    utterance.onend = () => { currentChunk++; speakChunk(); };
+
+    utterance.onend = () => {
+        currentIndex++;
+        speakFrom(currentIndex);
+    };
+
     speech.speak(utterance);
 }
 
 document.getElementById('playBtn').onclick = () => {
     speech.cancel();
-    currentChunk = 0;
-    speakChunk();
+    currentIndex = 0;
+    speakFrom(currentIndex);
 };
 document.getElementById('pauseBtn').onclick = () => speech.pause();
 document.getElementById('resumeBtn').onclick = () => speech.resume();
